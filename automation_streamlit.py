@@ -1,20 +1,13 @@
-import os
 import streamlit as st
 import pandas as pd
 from google.cloud import bigquery
 from io import BytesIO
 from datetime import datetime
 
-# ✅ GCP 인증
-if os.environ.get("STREAMLIT_CLOUD") == "1":
-    client = bigquery.Client.from_service_account_info(
-        st.secrets["gcp_service_account"]
-    )
-else:
-    client = bigquery.Client.from_service_account_json(
-        "C:/gcp_auth/dbpia-project-9c4650c54077.json",
-        project="dbpia-project"
-    )
+# ✅ GCP 인증: secrets.toml에 저장된 정보 사용 (Cloud + 로컬 동일)
+client = bigquery.Client.from_service_account_info(
+    st.secrets["gcp_service_account"]
+)
 
 # ✅ 제목
 st.title("📊 대학별 AI 서비스 이용 현황")
@@ -98,7 +91,7 @@ if b2b_id and search_button:
         pivot_used.index.name = "서비스 구분"
         pivot_used = pivot_used.reindex(columns=sorted_months)
 
-        # ✅ 결과 출력: 넓은 너비 제공
+        # ✅ 결과 출력
         st.subheader(f"📈 기관 ID: `{b2b_id}` 이용 현황")
         st.dataframe(
             pivot_used.style.set_properties(**{"text-align": "center"}),
