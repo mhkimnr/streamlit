@@ -29,10 +29,17 @@ def generate_month_labels(start_year=2024):
 month_labels = generate_month_labels()
 year_labels = sorted(set(label.split("-")[0] for label in month_labels))
 
+# ✅ ID와 기간 선택 구분선
+st.markdown("---")
+
+# ✅ 날짜 선택 안내 문구 추가
+st.caption("📅 날짜 선택은 선택사항입니다. 미선택 시 **2024년 1월부터 조회 시점 달(당월)까지 전체 조회**됩니다.(단, 당월은 전일자까지 반영)")
+
+
 # ✅ 연도/월 필터
-selected_years = st.multiselect("조회할 연도 선택 (선택하지 않으면 전체 기간 조회)", options=year_labels)
+selected_years = st.multiselect("[선택사항] 조회할 연도 선택", options=year_labels)
 filtered_months = [m for m in month_labels if m.split("-")[0] in selected_years] if selected_years else month_labels
-selected_months = st.multiselect("조회할 월 선택 (선택하지 않으면 전체 기간 조회)", options=filtered_months)
+selected_months = st.multiselect("[선택사항] 조회할 월 선택", options=filtered_months)
 
 # ✅ 검색 버튼
 search_button = st.button("🔍 검색")
