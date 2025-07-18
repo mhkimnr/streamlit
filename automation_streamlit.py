@@ -32,11 +32,8 @@ b2b_id = st.text_input("대학교 B2B_ID 입력 (예: ICST00004103)", placeholde
 if mode == "월별 조회":
     st.markdown("## 📅 월별 조회")
 
-    # ✅ 문구 추가: 기본 조회 기간 및 데이터 반영 범위
     today = datetime.today()
     yesterday = today - timedelta(days=1)
-
-    # Windows 호환 버전
     current_month_str = f"{today.year}년 {today.month}월"
     yesterday_str = f"{yesterday.year}년 {yesterday.month}월 {yesterday.day}일"
 
@@ -57,7 +54,9 @@ if mode == "월별 조회":
     if not selected_months:
         selected_months = filtered_months
 
-    if st.button("🔍 검색") and b2b_id:
+    search_triggered = st.button("🔍 검색")
+
+    if search_triggered and b2b_id:
         name_query = """
             SELECT b2b_nm FROM `dbpia-project.nurisql.AI_ALL_AGG`
             WHERE b2b_id = @b2b_id LIMIT 1
@@ -91,14 +90,14 @@ if mode == "월별 조회":
             def make_pivot(col_name):
                 pivot = df.pivot(index="service_type", columns="month_label", values=col_name).fillna(0)
                 pivot = pivot[~pivot.index.isin(["IDEA", "VIEWER", "SEARCH"])]
-                pivot = pivot.astype(int)
+                pivot = pivot.round(0).astype(int)
                 pivot.index.name = "구분"
                 return pivot.reindex(columns=sorted_months)
 
             pivot_usage = make_pivot("used")
             pivot_prev = make_pivot("prev_used")
-            total = pivot_usage.sum(axis=0)
-            prev_total = pivot_prev.sum(axis=0)
+            total = pivot_usage.sum(numeric_only=True).fillna(0).astype(int)
+            prev_total = pivot_prev.sum(numeric_only=True).fillna(0).astype(int)
             rate = (total / prev_total.replace(0, pd.NA) - 1) * 100
             rate = rate.apply(lambda x: f"{round(x,1)}%" if pd.notnull(x) else "-")
 
@@ -107,8 +106,8 @@ if mode == "월별 조회":
 
             pivot_session = make_pivot("session")
             pivot_session_prev = make_pivot("prev_session")
-            total_s = pivot_session.sum(axis=0)
-            total_prev_s = pivot_session_prev.sum(axis=0)
+            total_s = pivot_session.sum(numeric_only=True).fillna(0).astype(int)
+            total_prev_s = pivot_session_prev.sum(numeric_only=True).fillna(0).astype(int)
             rate_s = (total_s / total_prev_s.replace(0, pd.NA) - 1) * 100
             rate_s = rate_s.apply(lambda x: f"{round(x,1)}%" if pd.notnull(x) else "-")
 
@@ -129,8 +128,7 @@ if mode == "월별 조회":
             output.seek(0)
 
             file_name = f"{b2b_nm}_{b2b_id}_AI월별이용현황_{date.today().strftime('%Y%m%d')}.xlsx"
-            st.download_button("📥 엑셀 다운로드", data=output, file_name=file_name, mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-
+            st.download_button("📥 엑셀 다운로드", data=output, file_name=file_name, mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', key="download_button")
 
 # ---------- 일별 조회 ----------
 elif mode == "일별 조회":
@@ -139,9 +137,9 @@ elif mode == "일별 조회":
     with col1:
         start_date = st.date_input("시작 날짜", value=date.today())
     with col2:
-        end_date = st.date_input("종료 날짜", value=date.today())
+        end_date = st.date_input("종료 날짜(조회시점 전일까지 검색 가능)", value=date.today())
 
-    if st.button("🔍 일별 검색") and b2b_id:
+    if st.button("🔍 검색") and b2b_id:
         name_query = """
             SELECT b2b_nm FROM `dbpia-project.nurisql.AI_ALL_DYNAMIC`
             WHERE b2b_id = @b2b_id LIMIT 1
@@ -176,11 +174,8 @@ elif mode == "일별 조회":
             df.rename(columns={"DATE": "date"}, inplace=True)
             df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
 
-            df_used = df.pivot(index="service_type", columns="date", values="used").fillna(0)
-            df_session = df.pivot(index="service_type", columns="date", values="session").fillna(0)
-
-            df_used = df_used.applymap(lambda x: int(x))
-            df_session = df_session.applymap(lambda x: int(x))
+            df_used = df.pivot(index="service_type", columns="date", values="used").fillna(0).round(0).astype(int)
+            df_session = df.pivot(index="service_type", columns="date", values="session").fillna(0).round(0).astype(int)
 
             rename_map = {
                 "AI IDEA": "AI IDEA",
@@ -194,8 +189,8 @@ elif mode == "일별 조회":
             df_used = df_used.reindex(service_order).fillna(0)
             df_session = df_session.reindex(service_order).fillna(0)
 
-            df_used.loc["서비스 전체"] = df_used.sum(axis=0)
-            df_session.loc["서비스 전체"] = df_session.sum(axis=0)
+            df_used.loc["서비스 전체"] = df_used.sum(numeric_only=True).fillna(0).round(0).astype(int)
+            df_session.loc["서비스 전체"] = df_session.sum(numeric_only=True).fillna(0).round(0).astype(int)
 
             df_used.index.name = "구분"
             df_session.index.name = "구분"
