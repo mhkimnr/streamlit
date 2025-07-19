@@ -67,8 +67,10 @@ if mode == "월별 조회":
 
         main_query = """
             SELECT service_type, label AS month_label,
-                   SUM(used_sum) AS used, SUM(prev_year_used_sum) AS prev_used,
-                   SUM(session_sum) AS session, 0 AS prev_session
+                   SUM(used_sum) AS used,
+                   SUM(prev_year_used_sum) AS prev_used,
+                   SUM(session_sum) AS session,
+                   0 AS prev_session
             FROM `dbpia-project.nurisql.AI_ALL_AGG`
             WHERE agg_unit = '월' AND b2b_id = @b2b_id AND label IN UNNEST(@months)
             GROUP BY service_type, month_label
@@ -86,13 +88,13 @@ if mode == "월별 조회":
                 df[col] = df[col].fillna(0)
 
             sorted_months = sorted(selected_months)
+            service_order = ["AI IDEA", "AI Viewer", "AI Search"]
 
             def make_pivot(col_name):
                 pivot = df.pivot(index="service_type", columns="month_label", values=col_name).fillna(0)
-                pivot = pivot[~pivot.index.isin(["IDEA", "VIEWER", "SEARCH"])]
                 pivot = pivot.round(0).astype(int)
                 pivot.index.name = "구분"
-                return pivot.reindex(columns=sorted_months)
+                return pivot.reindex(service_order).reindex(columns=sorted_months)
 
             pivot_usage = make_pivot("used")
             pivot_prev = make_pivot("prev_used")
@@ -128,7 +130,9 @@ if mode == "월별 조회":
             output.seek(0)
 
             file_name = f"{b2b_nm}_{b2b_id}_AI월별이용현황_{date.today().strftime('%Y%m%d')}.xlsx"
-            st.download_button("📥 엑셀 다운로드", data=output, file_name=file_name, mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', key="download_button")
+            st.download_button("📥 엑셀 다운로드", data=output, file_name=file_name,
+                               mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                               key="download_button")
 
 # ---------- 일별 조회 ----------
 elif mode == "일별 조회":
@@ -189,8 +193,8 @@ elif mode == "일별 조회":
             df_used = df_used.reindex(service_order).fillna(0)
             df_session = df_session.reindex(service_order).fillna(0)
 
-            df_used.loc["서비스 전체"] = df_used.sum(numeric_only=True).fillna(0).round(0).astype(int)
-            df_session.loc["서비스 전체"] = df_session.sum(numeric_only=True).fillna(0).round(0).astype(int)
+            df_used.loc["서비스 전체"] = df_used.sum(numeric_only=True).fillna(0).astype(int)
+            df_session.loc["서비스 전체"] = df_session.sum(numeric_only=True).fillna(0).astype(int)
 
             df_used.index.name = "구분"
             df_session.index.name = "구분"
@@ -208,4 +212,5 @@ elif mode == "일별 조회":
             output.seek(0)
 
             file_name = f"{b2b_nm}_{b2b_id}_AI일별이용현황_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx"
-            st.download_button("📥 엑셀 다운로드", data=output, file_name=file_name, mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            st.download_button("📥 엑셀 다운로드", data=output, file_name=file_name,
+                               mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
