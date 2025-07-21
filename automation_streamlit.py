@@ -70,7 +70,7 @@ if mode == "월별 조회":
                    SUM(used_sum) AS used,
                    SUM(prev_year_used_sum) AS prev_used,
                    SUM(session_sum) AS session,
-                   0 AS prev_session
+                   SUM(prev_year_session_sum) AS prev_session
             FROM `dbpia-project.nurisql.AI_ALL_AGG`
             WHERE agg_unit = '월' AND b2b_id = @b2b_id AND label IN UNNEST(@months)
             GROUP BY service_type, month_label
@@ -108,9 +108,9 @@ if mode == "월별 조회":
 
             pivot_session = make_pivot("session")
             pivot_session_prev = make_pivot("prev_session")
-            total_s = pivot_session.sum(numeric_only=True).fillna(0).astype(int)
-            total_prev_s = pivot_session_prev.sum(numeric_only=True).fillna(0).astype(int)
-            rate_s = (total_s / total_prev_s.replace(0, pd.NA) - 1) * 100
+            total_s = pivot_session.sum(numeric_only=False).fillna(0).astype(int)
+            prev_total_s = pivot_session_prev.sum(numeric_only=False).fillna(0).astype(int)
+            rate_s = (total_s / prev_total_s.replace(0, pd.NA) - 1) * 100
             rate_s = rate_s.apply(lambda x: f"{round(x,1)}%" if pd.notnull(x) else "-")
 
             pivot_session.loc["서비스 전체"] = total_s
@@ -133,7 +133,6 @@ if mode == "월별 조회":
             st.download_button("📥 엑셀 다운로드", data=output, file_name=file_name,
                                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                                key="download_button")
-
 # ---------- 일별 조회 ----------
 elif mode == "일별 조회":
     st.markdown("## 📅 일별 조회")
