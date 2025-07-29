@@ -3,3 +3,5 @@ pandas
 openpyxl
 google-cloud-bigquery
 db-dtypes
+matplotlib
+wordcloud
