@@ -1,215 +1,166 @@
 import streamlit as st
 import pandas as pd
 from google.cloud import bigquery
-from io import BytesIO
-from datetime import datetime, date, timedelta
+from datetime import datetime
+from collections import Counter
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
 
 # GCP 인증
 client = bigquery.Client.from_service_account_info(st.secrets["gcp_service_account"])
 
-# 전체 월 라벨 생성
-def generate_month_labels(start_year=2024):
-    today = datetime.today()
-    labels = []
-    for year in range(start_year, today.year + 1):
-        end_month = 12 if year < today.year else today.month
-        for month in range(1, end_month + 1):
-            labels.append(f"{year}-{month:02}")
-    return labels
+# ---------- 쿼리 파라미터 ----------
+query_params = st.query_params
+is_print_mode = query_params.get("print_mode", "0") == "1"
+b2b_id_param = query_params.get("b2b_id", None)
 
-# ---------- 사이드바 ----------
-st.sidebar.title("🔍 조회 모드 선택")
-mode = st.sidebar.radio("조회 유형을 선택하세요", ["월별 조회", "일별 조회"])
+# ---------- CSS ----------
+st.markdown("""
+<style>
+    @media print {
+        header, footer, #search-wrapper, #pdf-tip, #print-button {
+            display: none !important;
+        }
+        body * {
+            visibility: hidden !important;
+        }
+        #report-section, #report-section * {
+            visibility: visible !important;
+        }
+        #report-section {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+        }
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# ---------- 공통 제목 ----------
-st.title("📊 대학별 AI 서비스 이용 현황")
-st.write("기관ID와 조회 기간을 선택 시, AI서비스 이용 현황을 확인 할 수 있습니다.")
+# ---------- 타이틀 ----------
+st.markdown("## 🎓 대학 리포트 조회")
 
-# ---------- 공통: B2B 기관 ID 입력 ----------
-b2b_id = st.text_input("대학교 B2B_ID 입력 (예: ICST00004103)", placeholder="기관ID를 입력하세요")
-
-# ---------- 월별 조회 ----------
-if mode == "월별 조회":
-    st.markdown("## 📅 월별 조회")
-
-    today = datetime.today()
-    yesterday = today - timedelta(days=1)
-    current_month_str = f"{today.year}년 {today.month}월"
-    yesterday_str = f"{yesterday.year}년 {yesterday.month}월 {yesterday.day}일"
-
-    st.markdown(f"""
-    <div style="font-size: 14px; color: gray;">
-    ※ 조회 연도 및 월을 선택하지 않을 경우, 기본 조회 기간은 2024년 1월부터 현재 조회 시점 기준 월({current_month_str})까지입니다.<br>
-    ※ 현재 월의 데이터는 조회 시점 전일({yesterday_str})까지 반영되어 조회됩니다.
-    </div>
-    """, unsafe_allow_html=True)
-
-    month_labels = generate_month_labels()
-    year_labels = sorted(set(label.split("-")[0] for label in month_labels))
-
-    selected_years = st.multiselect("[선택사항] 조회 연도 선택", options=year_labels)
-    filtered_months = [m for m in month_labels if m.split("-")[0] in selected_years] if selected_years else month_labels
-    selected_months = st.multiselect("[선택사항] 조회 월 선택", options=filtered_months)
-
-    if not selected_months:
-        selected_months = filtered_months
-
-    search_triggered = st.button("🔍 검색")
-
-    if search_triggered and b2b_id:
-        name_query = """
-            SELECT b2b_nm FROM `dbpia-project.nurisql.AI_ALL_AGG`
-            WHERE b2b_id = @b2b_id LIMIT 1
-        """
-        job = bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter("b2b_id", "STRING", b2b_id)])
-        name_df = client.query(name_query, job_config=job).to_dataframe()
-        b2b_nm = name_df["b2b_nm"].iloc[0] if not name_df.empty else b2b_id
-
-        main_query = """
-            SELECT service_type, label AS month_label,
-                   SUM(used_sum) AS used,
-                   SUM(prev_year_used_sum) AS prev_used,
-                   SUM(session_sum) AS session,
-                   SUM(prev_year_session_sum) AS prev_session
-            FROM `dbpia-project.nurisql.AI_ALL_AGG`
-            WHERE agg_unit = '월' AND b2b_id = @b2b_id AND label IN UNNEST(@months)
-            GROUP BY service_type, month_label
-        """
-        job_config = bigquery.QueryJobConfig(query_parameters=[
-            bigquery.ScalarQueryParameter("b2b_id", "STRING", b2b_id),
-            bigquery.ArrayQueryParameter("months", "STRING", selected_months)
-        ])
-        df = client.query(main_query, job_config=job_config).to_dataframe()
-
-        if df.empty:
-            st.warning("해당 조건에 대한 데이터가 없습니다.")
-        else:
-            for col in ["used", "prev_used", "session", "prev_session"]:
-                df[col] = df[col].fillna(0)
-
-            sorted_months = sorted(selected_months)
-            service_order = ["AI IDEA", "AI Viewer", "AI Search"]
-
-            def make_pivot(col_name):
-                pivot = df.pivot(index="service_type", columns="month_label", values=col_name).fillna(0)
-                pivot = pivot.round(0).astype(int)
-                pivot.index.name = "구분"
-                return pivot.reindex(service_order).reindex(columns=sorted_months)
-
-            pivot_usage = make_pivot("used")
-            pivot_prev = make_pivot("prev_used")
-            total = pivot_usage.sum(numeric_only=True).fillna(0).astype(int)
-            prev_total = pivot_prev.sum(numeric_only=True).fillna(0).astype(int)
-            rate = (total / prev_total.replace(0, pd.NA) - 1) * 100
-            rate = rate.apply(lambda x: f"{round(x,1)}%" if pd.notnull(x) else "-")
-
-            pivot_usage.loc["서비스 전체"] = total
-            pivot_usage.loc["전년대비"] = rate
-
-            pivot_session = make_pivot("session")
-            pivot_session_prev = make_pivot("prev_session")
-            total_s = pivot_session.sum(numeric_only=False).fillna(0).astype(int)
-            prev_total_s = pivot_session_prev.sum(numeric_only=False).fillna(0).astype(int)
-            rate_s = (total_s / prev_total_s.replace(0, pd.NA) - 1) * 100
-            rate_s = rate_s.apply(lambda x: f"{round(x,1)}%" if pd.notnull(x) else "-")
-
-            pivot_session.loc["서비스 전체"] = total_s
-            pivot_session.loc["전년대비"] = rate_s
-
-            st.subheader(f"📈 {b2b_nm} ({b2b_id}) 이용 현황")
-            st.dataframe(pivot_usage.style.set_properties(**{"text-align": "center"}), use_container_width=True)
-
-            st.markdown("---")
-            st.subheader(f"🧭 {b2b_nm} ({b2b_id}) 세션 수")
-            st.dataframe(pivot_session.style.set_properties(**{"text-align": "center"}), use_container_width=True)
-
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                pivot_usage.to_excel(writer, sheet_name="AI 이용 현황")
-                pivot_session.to_excel(writer, sheet_name="AI 세션 수")
-            output.seek(0)
-
-            file_name = f"{b2b_nm}_{b2b_id}_AI월별이용현황_{date.today().strftime('%Y%m%d')}.xlsx"
-            st.download_button("📥 엑셀 다운로드", data=output, file_name=file_name,
-                               mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                               key="download_button")
-# ---------- 일별 조회 ----------
-elif mode == "일별 조회":
-    st.markdown("## 📅 일별 조회")
-    col1, col2 = st.columns(2)
+# ---------- 검색 입력 (인쇄 모드에서는 숨김) ----------
+b2b_id = ""
+search_clicked = False
+if not is_print_mode:
+    st.markdown('<div id="search-wrapper">', unsafe_allow_html=True)
+    col1, col2 = st.columns([4, 1])
     with col1:
-        start_date = st.date_input("시작 날짜", value=date.today())
+        b2b_id = st.text_input("대학교 B2B_ID 입력 (예: ICST00004103)", placeholder="기관ID를 입력하세요", label_visibility="collapsed")
     with col2:
-        end_date = st.date_input("종료 날짜(조회시점 전일까지 검색 가능)", value=date.today())
+        search_clicked = st.button("🔍 검색", key="search_btn")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    if st.button("🔍 검색") and b2b_id:
-        name_query = """
-            SELECT b2b_nm FROM `dbpia-project.nurisql.AI_ALL_DYNAMIC`
-            WHERE b2b_id = @b2b_id LIMIT 1
-        """
-        name_job = bigquery.QueryJobConfig(query_parameters=[
-            bigquery.ScalarQueryParameter("b2b_id", "STRING", b2b_id)
-        ])
-        name_df = client.query(name_query, job_config=name_job).to_dataframe()
-        b2b_nm = name_df["b2b_nm"].iloc[0] if not name_df.empty else b2b_id
+    st.markdown(":arrow_down: 아래에서 리포트가 생성됩니다. 페이지를 내려 확인하세요.")
+else:
+    b2b_id = b2b_id_param  # URL에서 받은 B2B_ID 사용
 
-        start_label = start_date.strftime("%Y-%m-%d")
-        end_label = end_date.strftime("%Y-%m-%d")
+# ---------- 리포트 출력 조건 ----------
+if (search_clicked and b2b_id) or (is_print_mode and b2b_id):
+    st.markdown("<div id='report-section'>", unsafe_allow_html=True)
 
-        query = """
-            SELECT service_type, DATE AS date,
-                   SUM(used_sum) AS used,
-                   SUM(SESSION_CNT) AS session
-            FROM `dbpia-project.nurisql.AI_ALL_DYNAMIC`
-            WHERE B2B_ID = @b2b_id AND DATE BETWEEN @start AND @end
-            GROUP BY service_type, DATE
-        """
-        job_config = bigquery.QueryJobConfig(query_parameters=[
-            bigquery.ScalarQueryParameter("b2b_id", "STRING", b2b_id),
-            bigquery.ScalarQueryParameter("start", "STRING", start_label),
-            bigquery.ScalarQueryParameter("end", "STRING", end_label)
-        ])
-        df = client.query(query, job_config=job_config).to_dataframe()
+    # 기관명 조회
+    name_query = """
+        SELECT b2b_nm FROM `dbpia-project.nurisql.AI_ALL_AGG`
+        WHERE b2b_id = @b2b_id LIMIT 1
+    """
+    name_job = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("b2b_id", "STRING", b2b_id)
+    ])
+    name_df = client.query(name_query, job_config=name_job).to_dataframe()
+    b2b_nm = name_df["b2b_nm"].iloc[0] if not name_df.empty else b2b_id
 
-        if df.empty:
-            st.warning("선택한 기간에 대한 데이터가 없습니다.")
-        else:
-            df.rename(columns={"DATE": "date"}, inplace=True)
-            df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+    st.title(f"📊 {b2b_nm} ({b2b_id}) 리포트")
 
-            df_used = df.pivot(index="service_type", columns="date", values="used").fillna(0).round(0).astype(int)
-            df_session = df.pivot(index="service_type", columns="date", values="session").fillna(0).round(0).astype(int)
+    # ---------- 누적 이용 수 ----------
+    st.header("🖌 누적 이용 수 (2025.01.01 ~ 현재)")
+    month_labels = [f"{y}-{m:02}" for y in range(2025, datetime.today().year + 1)
+                    for m in range(1, 13)
+                    if not (y == datetime.today().year and m > datetime.today().month)]
 
-            rename_map = {
-                "AI IDEA": "AI IDEA",
-                "AI Viewer": "AI Viewer",
-                "AI Search": "AI Search"
-            }
-            df_used.index = df_used.index.map(rename_map.get)
-            df_session.index = df_session.index.map(rename_map.get)
+    cumulative_query = """
+        SELECT service_type, SUM(used_sum) AS total_used
+        FROM `dbpia-project.nurisql.AI_ALL_AGG`
+        WHERE agg_unit = '월' AND b2b_id = @b2b_id AND label IN UNNEST(@months)
+        GROUP BY service_type
+    """
+    cumulative_job = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("b2b_id", "STRING", b2b_id),
+        bigquery.ArrayQueryParameter("months", "STRING", month_labels)
+    ])
+    cumulative_df = client.query(cumulative_query, job_config=cumulative_job).to_dataframe()
 
-            service_order = ["AI IDEA", "AI Viewer", "AI Search"]
-            df_used = df_used.reindex(service_order).fillna(0)
-            df_session = df_session.reindex(service_order).fillna(0)
+    if cumulative_df.empty:
+        st.warning("누적 이용 수 데이터가 없습니다.")
+    else:
+        cumulative_df = cumulative_df.set_index("service_type").reindex(["AI IDEA", "AI Viewer", "AI Search"])
+        idea, viewer, search = cumulative_df["total_used"].fillna(0).astype(int).tolist()
 
-            df_used.loc["서비스 전체"] = df_used.sum(numeric_only=True).fillna(0).astype(int)
-            df_session.loc["서비스 전체"] = df_session.sum(numeric_only=True).fillna(0).astype(int)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("🧐 AI IDEA", f"{idea:,}")
+        c2.metric("👀 AI Viewer", f"{viewer:,}")
+        c3.metric("🔍 AI Search", f"{search:,}")
 
-            df_used.index.name = "구분"
-            df_session.index.name = "구분"
+    # ---------- 월별 이용 수 ----------
+    st.header("🗓 월별 이용 수 (2025년 기준)")
+    monthly_query = """
+        SELECT service_type, label AS month, SUM(used_sum) AS used
+        FROM `dbpia-project.nurisql.AI_ALL_AGG`
+        WHERE agg_unit = '월' AND b2b_id = @b2b_id AND label IN UNNEST(@months)
+        GROUP BY service_type, month
+    """
+    monthly_job = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("b2b_id", "STRING", b2b_id),
+        bigquery.ArrayQueryParameter("months", "STRING", month_labels)
+    ])
+    monthly_df = client.query(monthly_query, job_config=monthly_job).to_dataframe()
+    if monthly_df.empty:
+        st.warning("월별 이용 수 데이터가 없습니다.")
+    else:
+        pivot_df = monthly_df.pivot(index="service_type", columns="month", values="used").fillna(0)
+        pivot_df = pivot_df.round(0).astype(int)
+        pivot_df = pivot_df.reindex(["AI IDEA", "AI Viewer", "AI Search"])
+        st.dataframe(pivot_df.style.set_properties(**{"text-align": "center"}), use_container_width=True)
 
-            st.subheader(f"📊 {b2b_nm} ({b2b_id}) {start_label} ~ {end_label} 일자 이용 수")
-            st.dataframe(df_used.style.set_properties(**{"text-align": "center"}), use_container_width=True)
+    # ---------- 워드클라우드 ----------
+    st.header("💬 Search 질문 워드클라우드 (예시)")
+    dummy_questions = [
+        "논문 요약 알려줘", "연구 목적이 무엇이야?", "참고문헌 자동으로 생성돼?",
+        "자연어처리 최신 연구 알려줘", "논문 구조 설명해줘", "요약 정리해줘",
+        "AI 활용 사례는?", "결론은 무엇인가요?", "논문 키워드 추천해줘",
+        "서론 요약", "학술적 의의는?", "연구 방법론 설명해줘",
+        "검색어 관련 논문 있어?", "연구 배경 요약해줘", "요약해줘"
+    ]
+    tokens = []
+    for q in dummy_questions:
+        tokens.extend(q.split())
 
-            st.subheader(f"🧭 {b2b_nm} ({b2b_id}) {start_label} ~ {end_label} 일자 세션 수")
-            st.dataframe(df_session.style.set_properties(**{"text-align": "center"}), use_container_width=True)
+    counter = Counter(tokens)
+    wc = WordCloud(width=800, height=400, background_color='white', font_path="/System/Library/Fonts/AppleGothic.ttf")
+    wc.generate_from_frequencies(counter)
 
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                df_used.to_excel(writer, sheet_name="이용 수")
-                df_session.to_excel(writer, sheet_name="세션 수")
-            output.seek(0)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.imshow(wc, interpolation="bilinear")
+    ax.axis("off")
+    st.pyplot(fig)
 
-            file_name = f"{b2b_nm}_{b2b_id}_AI일별이용현황_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx"
-            st.download_button("📥 엑셀 다운로드", data=output, file_name=file_name,
-                               mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # 프린트 안내 또는 링크 생성 버튼
+    if is_print_mode:
+        st.info("📄 이 화면에서 Ctrl + P 또는 Cmd + P를 눌러 PDF로 저장하세요.")
+    elif b2b_id:
+        base_url = "https://dbpia-report.streamlit.app"
+        print_url = f"{base_url}?print_mode=1&b2b_id={b2b_id}"
+
+        st.markdown("<div id='pdf-tip'>", unsafe_allow_html=True)
+        st.success("📄 리포트를 PDF로 저장하려면 아래 버튼을 클릭하세요.")
+        st.markdown(f"""
+            <a href="{print_url}" target="_blank">
+                <button id="print-button" style="padding:10px 20px;font-size:16px;background-color:#ff4b4b;color:white;border:none;border-radius:8px;cursor:pointer;">
+                    🖨️ 인쇄용 화면 열기
+                </button>
+            </a>
+        """, unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
