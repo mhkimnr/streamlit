@@ -88,7 +88,7 @@ if mode == "월별 조회":
                 df[col] = df[col].fillna(0)
 
             sorted_months = sorted(selected_months)
-            service_order = ["AI IDEA", "AI Viewer", "AI Search"]
+            service_order = ["AI idea", "AI viewer", "AI search"]
 
             def make_pivot(col_name):
                 pivot = df.pivot(index="service_type", columns="month_label", values=col_name).fillna(0)
@@ -96,33 +96,42 @@ if mode == "월별 조회":
                 pivot.index.name = "구분"
                 return pivot.reindex(service_order).reindex(columns=sorted_months)
 
+            # 이용 수 피벗 처리
             pivot_usage = make_pivot("used")
             pivot_prev = make_pivot("prev_used")
             total = pivot_usage.sum(numeric_only=True).fillna(0).astype(int)
             prev_total = pivot_prev.sum(numeric_only=True).fillna(0).astype(int)
             rate = (total / prev_total.replace(0, pd.NA) - 1) * 100
-            rate = rate.apply(lambda x: f"{round(x,1)}%" if pd.notnull(x) else "-")
+            rate_str = rate.apply(lambda x: f"{round(x,1)}%" if pd.notnull(x) else "-").astype(str)
 
-            pivot_usage.loc["서비스 전체"] = total
-            pivot_usage.loc["전년대비"] = rate
+            pivot_usage_display = pivot_usage.copy()
+            pivot_usage_display.loc["서비스 전체"] = total
+            pivot_usage_display.loc["전년대비"] = rate_str
+            pivot_usage_display = pivot_usage_display.astype(str)
 
+            # 세션 수 피벗 처리
             pivot_session = make_pivot("session")
             pivot_session_prev = make_pivot("prev_session")
-            total_s = pivot_session.sum(numeric_only=False).fillna(0).astype(int)
-            prev_total_s = pivot_session_prev.sum(numeric_only=False).fillna(0).astype(int)
+            total_s = pivot_session.sum(numeric_only=True).fillna(0).astype(int)
+            prev_total_s = pivot_session_prev.sum(numeric_only=True).fillna(0).astype(int)
             rate_s = (total_s / prev_total_s.replace(0, pd.NA) - 1) * 100
-            rate_s = rate_s.apply(lambda x: f"{round(x,1)}%" if pd.notnull(x) else "-")
+            rate_s_str = rate_s.apply(lambda x: f"{round(x,1)}%" if pd.notnull(x) else "-").astype(str)
 
-            pivot_session.loc["서비스 전체"] = total_s
-            pivot_session.loc["전년대비"] = rate_s
+            pivot_session_display = pivot_session.copy()
+            pivot_session_display.loc["서비스 전체"] = total_s
+            pivot_session_display.loc["전년대비"] = rate_s_str
+            pivot_session_display = pivot_session_display.astype(str)
 
+            # Streamlit 출력
             st.subheader(f"📈 {b2b_nm} ({b2b_id}) 이용 현황")
-            st.dataframe(pivot_usage.style.set_properties(**{"text-align": "center"}), use_container_width=True)
+            st.dataframe(pivot_usage_display.style.set_properties(**{"text-align": "center"}), use_container_width=True)
 
             st.markdown("---")
             st.subheader(f"🧭 {b2b_nm} ({b2b_id}) 세션 수")
-            st.dataframe(pivot_session.style.set_properties(**{"text-align": "center"}), use_container_width=True)
+            st.dataframe(pivot_session_display.style.set_properties(**{"text-align": "center"}), use_container_width=True)
+            
 
+            # 엑셀 다운로드
             output = BytesIO()
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
                 pivot_usage.to_excel(writer, sheet_name="AI 이용 현황")
@@ -133,6 +142,7 @@ if mode == "월별 조회":
             st.download_button("📥 엑셀 다운로드", data=output, file_name=file_name,
                                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                                key="download_button")
+
 # ---------- 일별 조회 ----------
 elif mode == "일별 조회":
     st.markdown("## 📅 일별 조회")
@@ -180,15 +190,7 @@ elif mode == "일별 조회":
             df_used = df.pivot(index="service_type", columns="date", values="used").fillna(0).round(0).astype(int)
             df_session = df.pivot(index="service_type", columns="date", values="session").fillna(0).round(0).astype(int)
 
-            rename_map = {
-                "AI IDEA": "AI IDEA",
-                "AI Viewer": "AI Viewer",
-                "AI Search": "AI Search"
-            }
-            df_used.index = df_used.index.map(rename_map.get)
-            df_session.index = df_session.index.map(rename_map.get)
-
-            service_order = ["AI IDEA", "AI Viewer", "AI Search"]
+            service_order = ["AI idea", "AI viewer", "AI search"]
             df_used = df_used.reindex(service_order).fillna(0)
             df_session = df_session.reindex(service_order).fillna(0)
 
