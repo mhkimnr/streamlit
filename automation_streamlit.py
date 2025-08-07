@@ -134,8 +134,8 @@ if mode == "월별 조회":
             # 엑셀 다운로드
             output = BytesIO()
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                pivot_usage.to_excel(writer, sheet_name="AI 이용 현황")
-                pivot_session.to_excel(writer, sheet_name="AI 세션 수")
+                pivot_usage_display.to_excel(writer, sheet_name="AI 이용 현황")
+                pivot_session_display.to_excel(writer, sheet_name="AI 세션 수")
             output.seek(0)
 
             file_name = f"{b2b_nm}_{b2b_id}_AI월별이용현황_{date.today().strftime('%Y%m%d')}.xlsx"
